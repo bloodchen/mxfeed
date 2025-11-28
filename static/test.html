@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MXFeed Test Console</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .card {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+
+        .system-post {
+            border-color: #ff9800;
+            background-color: #fff3e0;
+        }
+
+        .meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .actions {
+            margin-top: 10px;
+        }
+
+        button {
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+
+        input,
+        select {
+            padding: 5px;
+        }
+
+        #controls {
+            background: #f5f5f5;
+            padding: 15px;
+            position: sticky;
+            top: 0;
+            border-bottom: 2px solid #ddd;
+            z-index: 100;
+        }
+
+        .stats {
+            font-weight: bold;
+            color: #007bff;
+            margin-right: 10px;
+        }
+
+        .comments-section {
+            margin-top: 10px;
+            padding-left: 20px;
+            border-left: 2px solid #eee;
+        }
+
+        .comment {
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="controls">
+        <label>Current User:
+            <select id="userSelect">
+                <option value="2001">User A (2001)</option>
+                <option value="2002">User B (2002)</option>
+                <option value="2003">User C (2003)</option>
+                <option value="1001">Admin (1001)</option>
+            </select>
+        </label>
+        <button onclick="refreshFeed()">Refresh Feed</button>
+        <hr>
+        <div style="display: flex; gap: 10px;">
+            <input type="text" id="postContent" placeholder="What's on your mind?" style="flex-grow: 1;">
+            <button onclick="createPost()">Post</button>
+        </div>
+        <div style="margin-top: 10px;">
+            <input type="number" id="followId" placeholder="User ID to follow">
+            <button onclick="followUser()">Follow</button>
+            <button onclick="unfollowUser()">Unfollow</button>
+        </div>
+        <div style="margin-top: 10px; display: flex; gap: 10px;">
+            <input type="text" id="searchQuery" placeholder="Search posts..." style="flex-grow: 1;">
+            <button onclick="searchPosts()">Search</button>
+        </div>
+    </div>
+
+    <div id="feed"></div>
+
+    <script>
+        const API_URL = 'http://localhost:8081'; // Adjust port if needed
+
+        function getUid() {
+            return document.getElementById('userSelect').value;
+        }
+
+        async function api(method, endpoint, data = null) {
+            const headers = {
+                'X-User-ID': getUid()
+            };
+            const options = { method, headers };
+            if (data) {
+                headers['Content-Type'] = 'application/json';
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                const res = await fetch(`${API_URL}${endpoint}`, options);
+                return await res.json();
+            } catch (err) {
+                console.error(err);
+                alert('API Error: ' + err.message);
+            }
+        }
+
+        async function createPost() {
+            const content = document.getElementById('postContent').value;
+            if (!content) return;
+
+            const uid = getUid();
+            let endpoint = '/v1/posts';
+            if (uid === '1001') endpoint = '/v1/system_posts';
+
+            const res = await api('POST', endpoint, { content: { text: content } });
+            if (res.result) {
+                document.getElementById('postContent').value = '';
+                refreshFeed();
+            } else {
+                alert('Error: ' + JSON.stringify(res));
+            }
+        }
+
+        async function followUser() {
+            const followee_id = document.getElementById('followId').value;
+            if (!followee_id) return;
+            const res = await api('POST', '/v1/follows', { followee_id });
+            alert(JSON.stringify(res));
+        }
+
+        async function unfollowUser() {
+            const followee_id = document.getElementById('followId').value;
+            if (!followee_id) return;
+            const res = await api('POST', '/v1/follows', { followee_id, action: 'unfollow' });
+            alert(JSON.stringify(res));
+        }
+
+        async function likePost(postId) {
+            await api('POST', `/v1/posts/${postId}/like`);
+            refreshFeed(); // Or just update local DOM
+        }
+
+        async function unlikePost(postId) {
+            await api('DELETE', `/v1/posts/${postId}/like`);
+            refreshFeed();
+        }
+
+        async function addComment(postId) {
+            const text = prompt("Enter comment:");
+            if (!text) return;
+            await api('POST', `/v1/posts/${postId}/comments`, { content: { text } });
+            refreshFeed();
+        }
+
+        async function searchPosts() {
+            const q = document.getElementById('searchQuery').value;
+            if (!q) return;
+
+            const feedDiv = document.getElementById('feed');
+            feedDiv.innerHTML = 'Searching...';
+
+            const res = await api('GET', `/v1/search?q=${encodeURIComponent(q)}`);
+            if (res.err) {
+                feedDiv.innerHTML = 'Error searching: ' + res.err;
+                return;
+            }
+
+            renderPosts(res.result.posts || []);
+        }
+
+        function renderPosts(posts) {
+            const feedDiv = document.getElementById('feed');
+            feedDiv.innerHTML = '';
+
+            if (posts.length === 0) {
+                feedDiv.innerHTML = '<p>No posts found.</p>';
+                return;
+            }
+
+            for (const post of posts) {
+                const isSystem = post.is_system;
+                const content = typeof post.content === 'string' ? JSON.parse(post.content) : post.content;
+                const stats = post.stats || { likes: 0, comments: 0 };
+
+                const div = document.createElement('div');
+                div.className = `card ${isSystem ? 'system-post' : ''}`;
+                div.innerHTML = `
+                    <div class="meta">
+                        <strong>User ${post.user_id}</strong> 
+                        ${isSystem ? '<span style="background:orange;color:white;padding:2px 5px;border-radius:3px;">SYSTEM</span>' : ''}
+                        | ${new Date(post.created_at || post.score).toLocaleString()}
+                        | ID: ${post.post_id}
+                    </div>
+                    <div class="content">${content.text || JSON.stringify(content)}</div>
+                    <div class="actions">
+                        <span class="stats">❤️ ${stats.likes}</span>
+                        <span class="stats">💬 ${stats.comments}</span>
+                        <button onclick="likePost('${post.post_id}')">Like</button>
+                        <button onclick="unlikePost('${post.post_id}')">Unlike</button>
+                        <button onclick="addComment('${post.post_id}')">Comment</button>
+                    </div>
+                    <div class="comments-section" id="comments-${post.post_id}">
+                        <!-- Comments loaded here -->
+                    </div>
+                `;
+                feedDiv.appendChild(div);
+
+                if (stats.comments > 0) {
+                    loadComments(post.post_id);
+                }
+            }
+        }
+
+        async function refreshFeed() {
+            const feedDiv = document.getElementById('feed');
+            feedDiv.innerHTML = 'Loading...';
+
+            const res = await api('GET', '/v1/feed?limit=50');
+            if (res.err) {
+                feedDiv.innerHTML = 'Error loading feed: ' + res.err;
+                return;
+            }
+
+            renderPosts(res.result.posts || []);
+        }
+
+        async function loadComments(postId) {
+            const res = await api('GET', `/v1/posts/${postId}/comments?limit=5`);
+            if (res.result && res.result.comments) {
+                const container = document.getElementById(`comments-${postId}`);
+                container.innerHTML = '';
+                res.result.comments.forEach(c => {
+                    const cContent = typeof c.content === 'string' ? JSON.parse(c.content) : c.content;
+                    const div = document.createElement('div');
+                    div.className = 'comment';
+                    div.innerHTML = `<strong>${c.user_id}:</strong> ${cContent.text}`;
+                    container.appendChild(div);
+                });
+            }
+        }
+
+        // Initial load
+        refreshFeed();
+    </script>
+</body>
+
+</html>

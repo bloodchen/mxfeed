@@ -1,0 +1,6 @@
+APP_NAME=mxfeed
+PORT=8081
+Modules=users,redis,posts,follows,queue
+DB_URL=postgresql://jeff:await-Pool.query@localhost:5432/mxfeed
+redis=redis://localhost:6379
+WORKER_ID=1
